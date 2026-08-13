@@ -22,6 +22,7 @@ bot.setMyCommands([
 
 // Start the background watcher
 watcher.startWatcher(bot);
+obiletApi.initBrowser().catch(e => console.warn('[Bot] Browser warmup warning:', e.message));
 
 // ==========================================
 // Processing Lock - Aynı anda 2 istek engeli
@@ -463,7 +464,11 @@ bot.on('callback_query', async (callbackQuery) => {
       });
 
       bot.deleteMessage(chatId, statusMsg.message_id).catch(() => { });
-      await bot.sendPhoto(chatId, imageBuffer, {}, { filename: 'sefer.png', contentType: 'image/png' });
+      if (imageBuffer) {
+        await bot.sendPhoto(chatId, imageBuffer, {}, { filename: 'sefer.png', contentType: 'image/png' });
+      } else {
+        await bot.sendMessage(chatId, cardMessageText, { parse_mode: 'Markdown' });
+      }
 
       db.updateUser(chatId, {
         state: 'WAITING_ALARM_TYPE',

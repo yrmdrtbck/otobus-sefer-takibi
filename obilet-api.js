@@ -1,5 +1,6 @@
 const cheerio = require('cheerio');
-const nodeHtmlToImage = require('node-html-to-image');
+const puppeteer = require('puppeteer');
+const handlebars = require('handlebars');
 const fs = require('fs');
 const path = require('path');
 
@@ -53,9 +54,58 @@ async function ensureSession(refererUrl) {
   }
 }
 
+let browserInstance = null;
+let browserLaunchPromise = null;
+
+async function getBrowser() {
+  if (browserInstance && browserInstance.connected) {
+    return browserInstance;
+  }
+  if (browserLaunchPromise) {
+    return browserLaunchPromise;
+  }
+  browserLaunchPromise = (async () => {
+    try {
+      console.log('[ObiletAPI] Chromium başlatılıyor...');
+      const browser = await puppeteer.launch({
+        headless: true,
+        pipe: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--no-zygote',
+          '--single-process',
+          '--disable-extensions',
+          '--disable-default-apps',
+          '--disable-sync'
+        ]
+      });
+      browser.on('disconnected', () => {
+        console.warn('[ObiletAPI] Chromium bağlantısı koptu.');
+        browserInstance = null;
+      });
+      browserInstance = browser;
+      console.log('[ObiletAPI] Chromium başarıyla hazırlandı.');
+      return browserInstance;
+    } catch (err) {
+      console.error('[ObiletAPI] Chromium başlatma hatası:', err.message);
+      return null;
+    } finally {
+      browserLaunchPromise = null;
+    }
+  })();
+  return browserLaunchPromise;
+}
+
 async function initBrowser() {
-  // Kept for backward compatibility. Browser initialization is no longer needed!
-  return true;
+  try {
+    await getBrowser();
+    return true;
+  } catch (err) {
+    return false;
+  }
 }
 
 async function searchCity(query) {
@@ -310,6 +360,8 @@ async function renderBusLayout(seats) {
   };
 }
 
+let compiledJourneyTemplate = null;
+
 async function renderJourneyCard(params) {
   const {
       partnerName,
@@ -323,8 +375,11 @@ async function renderJourneyCard(params) {
       seatData
   } = params;
 
-  const templatePath = path.join(__dirname, 'templates', 'journey-card.html');
-  const htmlTemplate = fs.readFileSync(templatePath, 'utf8');
+  if (!compiledJourneyTemplate) {
+    const templatePath = path.join(__dirname, 'templates', 'journey-card.html');
+    const htmlTemplate = fs.readFileSync(templatePath, 'utf8');
+    compiledJourneyTemplate = handlebars.compile(htmlTemplate);
+  }
 
   const months = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
   const [y, m, d] = date.split('-').map(Number);
@@ -368,15 +423,30 @@ async function renderJourneyCard(params) {
       dateFull: `${d} ${months[m - 1]} ${y}, ${dayName}`
   };
 
-  const imageBuffer = await nodeHtmlToImage({
-      html: htmlTemplate,
-      content: content,
-      selector: '#capture',
-      transparent: true,
-      puppeteerArgs: { args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-font-subpixel-kerning'] }
-  });
+  const renderedHtml = compiledJourneyTemplate(content);
 
-  return imageBuffer;
+  let page = null;
+  try {
+    const browser = await getBrowser();
+    if (!browser) {
+      console.warn('[ObiletAPI] Chromium browser instance unavailable, falling back to text.');
+      return null;
+    }
+    page = await browser.newPage();
+    await page.setViewport({ width: 850, height: 750, deviceScaleFactor: 2 });
+    await page.setContent(renderedHtml, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    
+    const captureEl = await page.$('#capture') || page;
+    const imageBuffer = await captureEl.screenshot({ type: 'png', omitBackground: true });
+    return imageBuffer;
+  } catch (err) {
+    console.error('[ObiletAPI] renderJourneyCard screenshot failed:', err.message);
+    return null;
+  } finally {
+    if (page) {
+      try { await page.close(); } catch (e) {}
+    }
+  }
 }
 
 module.exports = {
