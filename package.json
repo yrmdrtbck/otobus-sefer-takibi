@@ -14,6 +14,8 @@
     "cheerio": "^1.2.0",
     "dotenv": "^17.4.2",
     "fuse.js": "^7.4.1",
-    "node-telegram-bot-api": "^0.67.0"
+    "node-html-to-image": "^6.2.0",
+    "node-telegram-bot-api": "^0.67.0",
+    "puppeteer": "^25.6.0"
   }
 }

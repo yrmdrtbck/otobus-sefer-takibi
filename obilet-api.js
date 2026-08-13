@@ -273,12 +273,17 @@ function formatJourneyCardText({
 async function renderBusLayout(seats) {
   if (!seats || seats.length === 0) return { html: '', width: 0, height: 0 };
 
+  const minX = Math.min(...seats.map(s => s.x));
+  const minY = Math.min(...seats.map(s => s.y));
+
   let maxX = 0;
   let maxY = 0;
   
   seats.forEach(seat => {
-      if (seat.x > maxX) maxX = seat.x;
-      if (seat.y > maxY) maxY = seat.y;
+      const relX = seat.x - minX;
+      const relY = seat.y - minY;
+      if (relX > maxX) maxX = relX;
+      if (relY > maxY) maxY = relY;
   });
 
   let html = '';
@@ -290,14 +295,17 @@ async function renderBusLayout(seats) {
           else statusClass = 'sold-unknown';
       }
       
-      html += `<div class="seat ${statusClass}" style="left: ${seat.x}px; top: ${seat.y}px;">
+      const posX = seat.x - minX;
+      const posY = seat.y - minY;
+      
+      html += `<div class="seat ${statusClass}" style="left: ${posX}px; top: ${posY}px;">
           ${seat.number}
       </div>`;
   });
 
   return {
       html: html,
-      width: maxX + 50,
+      width: maxX + 52,
       height: maxY + 50
   };
 }
@@ -363,7 +371,9 @@ async function renderJourneyCard(params) {
   const imageBuffer = await nodeHtmlToImage({
       html: htmlTemplate,
       content: content,
-      puppeteerArgs: { args: ['--no-sandbox', '--disable-setuid-sandbox'] }
+      selector: '#capture',
+      transparent: true,
+      puppeteerArgs: { args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-font-subpixel-kerning'] }
   });
 
   return imageBuffer;

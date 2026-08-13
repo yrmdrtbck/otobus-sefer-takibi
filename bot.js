@@ -463,7 +463,7 @@ bot.on('callback_query', async (callbackQuery) => {
       });
 
       bot.deleteMessage(chatId, statusMsg.message_id).catch(() => { });
-      await bot.sendPhoto(chatId, imageBuffer);
+      await bot.sendPhoto(chatId, imageBuffer, {}, { filename: 'sefer.png', contentType: 'image/png' });
 
       db.updateUser(chatId, {
         state: 'WAITING_ALARM_TYPE',
