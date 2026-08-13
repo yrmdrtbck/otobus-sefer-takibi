@@ -448,8 +448,22 @@ bot.on('callback_query', async (callbackQuery) => {
         seatData
       });
 
+      bot.editMessageText('Görsel hazırlanıyor, lütfen bekleyin... 🎨', { chat_id: chatId, message_id: statusMsg.message_id }).catch(() => {});
+
+      const imageBuffer = await obiletApi.renderJourneyCard({
+        partnerName: selectedJourney['partner-name'] || 'Firma',
+        originName: user.temp.originName,
+        destName: user.temp.destName,
+        departureTime,
+        date,
+        price,
+        totalSeats,
+        availableSeats,
+        seatData
+      });
+
       bot.deleteMessage(chatId, statusMsg.message_id).catch(() => { });
-      await bot.sendMessage(chatId, cardMessageText, { parse_mode: 'Markdown' });
+      await bot.sendPhoto(chatId, imageBuffer);
 
       db.updateUser(chatId, {
         state: 'WAITING_ALARM_TYPE',

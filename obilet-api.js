@@ -1,4 +1,7 @@
 const cheerio = require('cheerio');
+const nodeHtmlToImage = require('node-html-to-image');
+const fs = require('fs');
+const path = require('path');
 
 const cookieStore = new Map();
 
@@ -267,12 +270,103 @@ function formatJourneyCardText({
   return text;
 }
 
-async function renderJourneyCard(params) {
-  return null;
+async function renderBusLayout(seats) {
+  if (!seats || seats.length === 0) return { html: '', width: 0, height: 0 };
+
+  let maxX = 0;
+  let maxY = 0;
+  
+  seats.forEach(seat => {
+      if (seat.x > maxX) maxX = seat.x;
+      if (seat.y > maxY) maxY = seat.y;
+  });
+
+  let html = '';
+  seats.forEach(seat => {
+      let statusClass = 'available';
+      if (!seat.available) {
+          if (seat.gender === 'male') statusClass = 'sold-male';
+          else if (seat.gender === 'female') statusClass = 'sold-female';
+          else statusClass = 'sold-unknown';
+      }
+      
+      html += `<div class="seat ${statusClass}" style="left: ${seat.x}px; top: ${seat.y}px;">
+          ${seat.number}
+      </div>`;
+  });
+
+  return {
+      html: html,
+      width: maxX + 50,
+      height: maxY + 50
+  };
 }
 
-async function renderBusLayout(svgStr) {
-  return null;
+async function renderJourneyCard(params) {
+  const {
+      partnerName,
+      originName,
+      destName,
+      departureTime,
+      date,
+      price,
+      totalSeats,
+      availableSeats,
+      seatData
+  } = params;
+
+  const templatePath = path.join(__dirname, 'templates', 'journey-card.html');
+  const htmlTemplate = fs.readFileSync(templatePath, 'utf8');
+
+  const months = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+  const [y, m, d] = date.split('-').map(Number);
+  const days = ['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi'];
+  const dateObj = new Date(y, m - 1, d);
+  const dayName = days[dateObj.getDay()];
+  const formattedDate = `${d} ${months[m - 1]}`;
+
+  const occupancyPercent = totalSeats > 0 ? Math.round(((totalSeats - availableSeats) / totalSeats) * 100) : 0;
+  const availablePercent = 100 - occupancyPercent;
+  
+  let statusColor = '#10b981';
+  let statusText = 'Müsait';
+  if (availablePercent <= 20) {
+      statusColor = '#e11d48';
+      statusText = 'Son Koltuklar!';
+  } else if (availablePercent <= 50) {
+      statusColor = '#f59e0b';
+      statusText = 'Dolmak Üzere';
+  }
+
+  const busLayout = await renderBusLayout(seatData || []);
+
+  const content = {
+      partnerName: partnerName || 'Firma',
+      originName,
+      destName,
+      departureTime,
+      date: formattedDate,
+      day: dayName,
+      price,
+      availableSeats,
+      soldSeats: totalSeats - availableSeats,
+      totalSeats,
+      statusColor,
+      statusText,
+      availablePercent,
+      gridWidth: busLayout.width,
+      gridHeight: busLayout.height,
+      busLayoutHtml: busLayout.html,
+      dateFull: `${d} ${months[m - 1]} ${y}, ${dayName}`
+  };
+
+  const imageBuffer = await nodeHtmlToImage({
+      html: htmlTemplate,
+      content: content,
+      puppeteerArgs: { args: ['--no-sandbox', '--disable-setuid-sandbox'] }
+  });
+
+  return imageBuffer;
 }
 
 module.exports = {

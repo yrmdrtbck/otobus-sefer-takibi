@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc; /* Very subtle blue-gray background */
+            margin: 0;
+            padding: 0;
+            width: 800px;
+            /* Height is auto, it will expand based on content */
+            display: flex;
+            flex-direction: column;
+            color: #334155;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Header Section */
+        .header {
+            background: linear-gradient(135deg, #e11d48, #be123c);
+            color: white;
+            padding: 30px 40px;
+            display: flex;
+            align-items: center;
+            border-bottom-left-radius: 20px;
+            border-bottom-right-radius: 20px;
+            box-shadow: 0 10px 25px -5px rgba(225, 29, 72, 0.4);
+            margin-bottom: 30px;
+        }
+
+        .logo-box {
+            background: white;
+            border-radius: 16px;
+            width: 80px;
+            height: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 25px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            font-weight: 700;
+            color: #e11d48;
+            font-size: 14px;
+            text-align: center;
+            line-height: 1.2;
+            overflow: hidden;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        .header-content {
+            flex: 1;
+        }
+
+        .company-name {
+            font-size: 28px;
+            font-weight: 700;
+            margin: 0 0 10px 0;
+            letter-spacing: -0.5px;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.2);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            backdrop-filter: blur(4px);
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: {{statusColor}}; /* Dynamic color */
+            margin-right: 8px;
+            box-shadow: 0 0 0 2px rgba(255,255,255,0.3);
+        }
+
+        /* Route Section */
+        .route-section {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 50px;
+            margin-bottom: 30px;
+        }
+
+        .city {
+            text-align: center;
+            flex: 1;
+        }
+
+        .city-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #94a3b8;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .city-name {
+            font-size: 26px;
+            font-weight: 700;
+            color: #1e293b;
+        }
+
+        .route-arrow {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex: 0.5;
+        }
+
+        .line {
+            width: 100px;
+            height: 2px;
+            background: #cbd5e1;
+            position: relative;
+            margin-bottom: 15px;
+        }
+
+        .line::after {
+            content: '';
+            position: absolute;
+            right: 0;
+            top: -4px;
+            border-top: 5px solid transparent;
+            border-bottom: 5px solid transparent;
+            border-left: 8px solid #cbd5e1;
+        }
+
+        .bus-icon-small {
+            font-size: 24px;
+        }
+
+        /* Divider */
+        .divider {
+            height: 1px;
+            background: repeating-linear-gradient(90deg, #e2e8f0, #e2e8f0 6px, transparent 6px, transparent 12px);
+            margin: 0 40px 30px 40px;
+        }
+
+        /* Info Cards */
+        .info-cards {
+            display: flex;
+            gap: 20px;
+            padding: 0 40px;
+            margin-bottom: 40px;
+        }
+
+        .card {
+            flex: 1;
+            background: white;
+            border-radius: 16px;
+            padding: 25px 20px;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+            border: 1px solid #f1f5f9;
+        }
+
+        .card-icon {
+            font-size: 28px;
+            margin-bottom: 15px;
+        }
+
+        .card-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 8px;
+        }
+
+        .card.price .card-value {
+            color: #10b981; /* Green for price */
+        }
+
+        .card-label {
+            font-size: 14px;
+            color: #94a3b8;
+            font-weight: 500;
+        }
+
+        /* Layout Section Header */
+        .layout-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 40px;
+            border-top: 1px solid #f1f5f9;
+            background: white;
+            margin-top: 10px;
+            border-top-left-radius: 20px;
+            border-top-right-radius: 20px;
+        }
+
+        .layout-title {
+            display: flex;
+            align-items: center;
+            font-size: 18px;
+            font-weight: 700;
+            color: #334155;
+        }
+        .layout-title span { margin-right: 10px; font-size: 22px; }
+
+        .legend {
+            display: flex;
+            gap: 15px;
+        }
+
+        .legend-item {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .legend-empty { background: #d1fae5; color: #059669; }
+        .legend-sold { background: #ffe4e6; color: #e11d48; }
+        .legend-total { background: #dbeafe; color: #2563eb; }
+        
+        .progress-bar-container {
+            padding: 0 40px;
+            background: white;
+            height: 10px;
+        }
+        
+        .progress-bar {
+            height: 6px;
+            background: #e2e8f0;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: #10b981;
+            border-radius: 3px;
+        }
+
+        /* Bus Layout Container */
+        .bus-layout-container {
+            padding: 20px 40px 40px 40px;
+            background: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            border-bottom-left-radius: 20px;
+            border-bottom-right-radius: 20px;
+            margin-bottom: 20px;
+        }
+
+        .bus-outline {
+            position: relative;
+            background: #f8fafc;
+            border: 3px solid #e2e8f0;
+            border-radius: 60px 20px 20px 60px; /* Bus shape: front rounded more */
+            padding: 30px 40px 30px 70px;
+            min-width: 600px;
+            box-sizing: border-box;
+            display: flex;
+            /* The actual seat grid will be injected here */
+        }
+        
+        .steering-wheel {
+            position: absolute;
+            left: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 30px;
+            height: 30px;
+            border: 3px solid #cbd5e1;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .steering-wheel::before {
+            content: '';
+            width: 3px;
+            height: 30px;
+            background: #cbd5e1;
+            position: absolute;
+        }
+
+        .steering-wheel::after {
+            content: '';
+            width: 30px;
+            height: 3px;
+            background: #cbd5e1;
+            position: absolute;
+        }
+        
+        /* Rendered Seat Grid */
+        .seat-grid {
+            position: relative;
+            /* We will calculate width and height dynamically based on max x and y */
+            width: 100%;
+        }
+
+        .seat {
+            position: absolute;
+            width: 38px;
+            height: 38px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+            box-sizing: border-box;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .seat.available {
+            background: white;
+            border: 1px solid #cbd5e1;
+            color: #475569;
+        }
+
+        .seat.sold-male {
+            background: #eff6ff;
+            border: 1px solid #93c5fd;
+            color: #1d4ed8;
+        }
+
+        .seat.sold-female {
+            background: #fdf2f8;
+            border: 1px solid #f9a8d4;
+            color: #be185d;
+        }
+        
+        .seat.sold-unknown {
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            color: #94a3b8;
+        }
+
+        .footer {
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            color: #94a3b8;
+            font-size: 13px;
+            background: #f8fafc;
+        }
+
+        .gender-legend {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            margin-top: 20px;
+        }
+
+        .gl-item {
+            display: flex;
+            align-items: center;
+            font-size: 13px;
+            color: #64748b;
+        }
+
+        .gl-box {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+            margin-right: 6px;
+        }
+
+        .gl-empty { background: white; border: 1px solid #cbd5e1; }
+        .gl-male { background: #eff6ff; border: 1px solid #93c5fd; }
+        .gl-female { background: #fdf2f8; border: 1px solid #f9a8d4; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="logo-box">
+            {{partnerName}}
+        </div>
+        <div class="header-content">
+            <h1 class="company-name">{{partnerName}}</h1>
+            <div class="status-badge">
+                <div class="status-dot"></div>
+                {{statusText}}
+            </div>
+        </div>
+    </div>
+
+    <div class="route-section">
+        <div class="city">
+            <div class="city-label">KALKIŞ</div>
+            <div class="city-name">{{originName}}</div>
+        </div>
+        
+        <div class="route-arrow">
+            <div class="line"></div>
+            <div class="bus-icon-small">🚌</div>
+        </div>
+
+        <div class="city" style="text-align: right;">
+            <div class="city-label">VARIŞ</div>
+            <div class="city-name">{{destName}}</div>
+        </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="info-cards">
+        <div class="card">
+            <div class="card-icon">🕚</div>
+            <div class="card-value">{{departureTime}}</div>
+            <div class="card-label">Kalkış Saati</div>
+        </div>
+        <div class="card">
+            <div class="card-icon">📅</div>
+            <div class="card-value">{{date}}</div>
+            <div class="card-label">{{day}}</div>
+        </div>
+        <div class="card price">
+            <div class="card-icon">💰</div>
+            <div class="card-value">{{price}} ₺</div>
+            <div class="card-label">Fiyat</div>
+        </div>
+    </div>
+
+    <div class="layout-header">
+        <div class="layout-title">
+            <span>💺</span> Koltuk Durumu
+        </div>
+        <div class="legend">
+            <div class="legend-item legend-empty">Boş: {{availableSeats}}</div>
+            <div class="legend-item legend-sold">Dolu: {{soldSeats}}</div>
+            <div class="legend-item legend-total">Toplam: {{totalSeats}}</div>
+        </div>
+    </div>
+    <div class="progress-bar-container">
+        <div class="progress-bar">
+            <div class="progress-fill" style="width: {{availablePercent}}%;"></div>
+        </div>
+    </div>
+
+    <div class="bus-layout-container">
+        <div class="bus-outline">
+            <div class="steering-wheel"></div>
+            <div class="seat-grid" style="height: {{gridHeight}}px; width: {{gridWidth}}px;">
+                {{{busLayoutHtml}}}
+            </div>
+        </div>
+        
+        <div class="gender-legend">
+            <div class="gl-item"><div class="gl-box gl-empty"></div> Boş</div>
+            <div class="gl-item"><div class="gl-box gl-male"></div> Erkek</div>
+            <div class="gl-item"><div class="gl-box gl-female"></div> Kadın</div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <div>🚌 Obilet İzleyici</div>
+        <div>{{dateFull}}</div>
+    </div>
+
+</body>
+</html>
