@@ -11,12 +11,10 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "cheerio": "^1.2.0",
     "dotenv": "^17.4.2",
     "fuse.js": "^7.4.1",
-    "handlebars": "^4.7.9",
-    "node-html-to-image": "^6.2.0",
-    "node-telegram-bot-api": "^0.67.0",
-    "puppeteer": "^25.6.0"
+    "node-telegram-bot-api": "^0.67.0"
   }
 }

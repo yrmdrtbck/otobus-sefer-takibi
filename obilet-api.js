@@ -1,6 +1,5 @@
 const cheerio = require('cheerio');
-const puppeteer = require('puppeteer');
-const handlebars = require('handlebars');
+const { Resvg } = require('@resvg/resvg-js');
 const fs = require('fs');
 const path = require('path');
 
@@ -54,58 +53,9 @@ async function ensureSession(refererUrl) {
   }
 }
 
-let browserInstance = null;
-let browserLaunchPromise = null;
-
-async function getBrowser() {
-  if (browserInstance && browserInstance.connected) {
-    return browserInstance;
-  }
-  if (browserLaunchPromise) {
-    return browserLaunchPromise;
-  }
-  browserLaunchPromise = (async () => {
-    try {
-      console.log('[ObiletAPI] Chromium başlatılıyor...');
-      const browser = await puppeteer.launch({
-        headless: true,
-        pipe: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--no-zygote',
-          '--single-process',
-          '--disable-extensions',
-          '--disable-default-apps',
-          '--disable-sync'
-        ]
-      });
-      browser.on('disconnected', () => {
-        console.warn('[ObiletAPI] Chromium bağlantısı koptu.');
-        browserInstance = null;
-      });
-      browserInstance = browser;
-      console.log('[ObiletAPI] Chromium başarıyla hazırlandı.');
-      return browserInstance;
-    } catch (err) {
-      console.error('[ObiletAPI] Chromium başlatma hatası:', err.message);
-      return null;
-    } finally {
-      browserLaunchPromise = null;
-    }
-  })();
-  return browserLaunchPromise;
-}
-
 async function initBrowser() {
-  try {
-    await getBrowser();
-    return true;
-  } catch (err) {
-    return false;
-  }
+  // Kept for backward compatibility. Browser initialization is no longer needed!
+  return true;
 }
 
 async function searchCity(query) {
@@ -320,66 +270,28 @@ function formatJourneyCardText({
   return text;
 }
 
-async function renderBusLayout(seats) {
-  if (!seats || seats.length === 0) return { html: '', width: 0, height: 0 };
-
-  const minX = Math.min(...seats.map(s => s.x));
-  const minY = Math.min(...seats.map(s => s.y));
-
-  let maxX = 0;
-  let maxY = 0;
-  
-  seats.forEach(seat => {
-      const relX = seat.x - minX;
-      const relY = seat.y - minY;
-      if (relX > maxX) maxX = relX;
-      if (relY > maxY) maxY = relY;
-  });
-
-  let html = '';
-  seats.forEach(seat => {
-      let statusClass = 'available';
-      if (!seat.available) {
-          if (seat.gender === 'male') statusClass = 'sold-male';
-          else if (seat.gender === 'female') statusClass = 'sold-female';
-          else statusClass = 'sold-unknown';
-      }
-      
-      const posX = seat.x - minX;
-      const posY = seat.y - minY;
-      
-      html += `<div class="seat ${statusClass}" style="left: ${posX}px; top: ${posY}px;">
-          ${seat.number}
-      </div>`;
-  });
-
-  return {
-      html: html,
-      width: maxX + 52,
-      height: maxY + 50
-  };
+function escapeXml(unsafe) {
+  if (unsafe == null) return '';
+  return String(unsafe)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
 
-let compiledJourneyTemplate = null;
-
-async function renderJourneyCard(params) {
+function buildJourneyCardSvg(params) {
   const {
-      partnerName,
-      originName,
-      destName,
-      departureTime,
-      date,
-      price,
-      totalSeats,
-      availableSeats,
-      seatData
+    partnerName = 'Firma',
+    originName = 'Kalkış',
+    destName = 'Varış',
+    departureTime = '00:00',
+    date = '2026-08-14',
+    price = 0,
+    totalSeats = 0,
+    availableSeats = 0,
+    seatData = []
   } = params;
-
-  if (!compiledJourneyTemplate) {
-    const templatePath = path.join(__dirname, 'templates', 'journey-card.html');
-    const htmlTemplate = fs.readFileSync(templatePath, 'utf8');
-    compiledJourneyTemplate = handlebars.compile(htmlTemplate);
-  }
 
   const months = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
   const [y, m, d] = date.split('-').map(Number);
@@ -387,66 +299,288 @@ async function renderJourneyCard(params) {
   const dateObj = new Date(y, m - 1, d);
   const dayName = days[dateObj.getDay()];
   const formattedDate = `${d} ${months[m - 1]}`;
+  const dateFull = `${d} ${months[m - 1]} ${y}, ${dayName}`;
 
   const occupancyPercent = totalSeats > 0 ? Math.round(((totalSeats - availableSeats) / totalSeats) * 100) : 0;
   const availablePercent = 100 - occupancyPercent;
-  
+
   let statusColor = '#10b981';
   let statusText = 'Müsait';
   if (availablePercent <= 20) {
-      statusColor = '#e11d48';
-      statusText = 'Son Koltuklar!';
+    statusColor = '#e11d48';
+    statusText = 'Son Koltuklar!';
   } else if (availablePercent <= 50) {
-      statusColor = '#f59e0b';
-      statusText = 'Dolmak Üzere';
+    statusColor = '#f59e0b';
+    statusText = 'Dolmak Üzere';
   }
 
-  const busLayout = await renderBusLayout(seatData || []);
+  // Calculate seat coordinates & bounding box
+  let minX = 0, minY = 0, maxX = 0, maxY = 0;
+  if (seatData && seatData.length > 0) {
+    minX = Math.min(...seatData.map(s => s.x));
+    minY = Math.min(...seatData.map(s => s.y));
+    maxX = Math.max(...seatData.map(s => s.x - minX));
+    maxY = Math.max(...seatData.map(s => s.y - minY));
+  }
 
-  const content = {
-      partnerName: partnerName || 'Firma',
-      originName,
-      destName,
-      departureTime,
-      date: formattedDate,
-      day: dayName,
-      price,
-      availableSeats,
-      soldSeats: totalSeats - availableSeats,
-      totalSeats,
-      statusColor,
-      statusText,
-      availablePercent,
-      gridWidth: busLayout.width,
-      gridHeight: busLayout.height,
-      busLayoutHtml: busLayout.html,
-      dateFull: `${d} ${months[m - 1]} ${y}, ${dayName}`
-  };
+  const gridWidth = maxX > 0 ? maxX + 44 : 520;
+  const gridHeight = maxY > 0 ? maxY + 42 : 120;
 
-  const renderedHtml = compiledJourneyTemplate(content);
+  const busWidth = Math.max(680, gridWidth + 95);
+  const busHeight = Math.max(140, gridHeight + 40);
 
-  let page = null;
-  try {
-    const browser = await getBrowser();
-    if (!browser) {
-      console.warn('[ObiletAPI] Chromium browser instance unavailable, falling back to text.');
-      return null;
-    }
-    page = await browser.newPage();
-    await page.setViewport({ width: 850, height: 750, deviceScaleFactor: 2 });
-    await page.setContent(renderedHtml, { waitUntil: 'domcontentloaded', timeout: 15000 });
+  const cardWidth = Math.max(840, busWidth + 80);
+  const busX = (cardWidth - busWidth) / 2;
+  const busY = 330;
+
+  const legendY = busY + busHeight + 20;
+  const footerY = legendY + 34;
+  const cardHeight = footerY + 52;
+
+  // Partner initials
+  const initials = escapeXml(partnerName.trim().substring(0, 4).toUpperCase());
+
+  // Seats SVG elements
+  const seatStartX = busX + 68;
+  const seatStartY = busY + 20;
+
+  let seatsSvg = '';
+  if (seatData && seatData.length > 0) {
+    seatData.forEach(seat => {
+      const sx = seatStartX + (seat.x - minX);
+      const sy = seatStartY + (seat.y - minY);
+
+      let fill = '#ffffff';
+      let stroke = '#cbd5e1';
+      let textColor = '#334155';
+
+      if (!seat.available) {
+        if (seat.gender === 'male') {
+          fill = '#eff6ff';
+          stroke = '#93c5fd';
+          textColor = '#1d4ed8';
+        } else if (seat.gender === 'female') {
+          fill = '#fdf2f8';
+          stroke = '#f472b6';
+          textColor = '#be185d';
+        } else {
+          fill = '#f1f5f9';
+          stroke = '#cbd5e1';
+          textColor = '#94a3b8';
+        }
+      }
+
+      seatsSvg += `
+        <rect x="${sx}" y="${sy}" width="44" height="42" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="1.5" filter="url(#dropShadow)" />
+        <text x="${sx + 22}" y="${sy + 26}" text-anchor="middle" font-family="'Segoe UI', 'Inter', -apple-system, Roboto, sans-serif" font-size="15" font-weight="800" fill="${textColor}">${escapeXml(seat.number)}</text>
+      `;
+    });
+  }
+
+  // Info cards calculations
+  const innerMargin = 40;
+  const innerWidth = cardWidth - (innerMargin * 2);
+  const cardGap = 16;
+  const cardItemWidth = (innerWidth - (cardGap * 2)) / 3;
+
+  const card1X = innerMargin;
+  const card2X = innerMargin + cardItemWidth + cardGap;
+  const card3X = innerMargin + (cardItemWidth + cardGap) * 2;
+
+  // Badges calculations
+  const soldSeats = totalSeats - availableSeats;
+  const badge3W = 95;
+  const badge2W = 85;
+  const badge1W = 85;
+  const bGap = 8;
+  const b3X = cardWidth - innerMargin - badge3W;
+  const b2X = b3X - bGap - badge2W;
+  const b1X = b2X - bGap - badge1W;
+
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${cardWidth}" height="${cardHeight}" viewBox="0 0 ${cardWidth} ${cardHeight}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#be123c" />
+      <stop offset="50%" stop-color="#e11d48" />
+      <stop offset="100%" stop-color="#f43f5e" />
+    </linearGradient>
+    <linearGradient id="routeLeftGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#e2e8f0" />
+      <stop offset="100%" stop-color="#e11d48" />
+    </linearGradient>
+    <linearGradient id="routeRightGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#e11d48" />
+      <stop offset="100%" stop-color="#e2e8f0" />
+    </linearGradient>
+    <linearGradient id="progressGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <filter id="dropShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000000" flood-opacity="0.06" />
+    </filter>
+    <clipPath id="cardClip">
+      <rect x="0" y="0" width="${cardWidth}" height="${cardHeight}" rx="24" ry="24" />
+    </clipPath>
+  </defs>
+
+  <style>
+    .font-base { font-family: 'Segoe UI', 'Inter', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+
+  <!-- Main Card Container -->
+  <g clip-path="url(#cardClip)">
+    <!-- Base Background -->
+    <rect x="0" y="0" width="${cardWidth}" height="${cardHeight}" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5" />
+
+    <!-- 1. Header -->
+    <rect x="0" y="0" width="${cardWidth}" height="76" fill="url(#headerGrad)" />
     
-    const captureEl = await page.$('#capture') || page;
-    const imageBuffer = await captureEl.screenshot({ type: 'png', omitBackground: true });
-    return imageBuffer;
-  } catch (err) {
-    console.error('[ObiletAPI] renderJourneyCard screenshot failed:', err.message);
-    return null;
-  } finally {
-    if (page) {
-      try { await page.close(); } catch (e) {}
+    <!-- Logo Box -->
+    <rect x="36" y="13" width="50" height="50" rx="12" fill="#ffffff" filter="url(#dropShadow)" />
+    <text class="font-base" x="61" y="43" text-anchor="middle" font-size="13" font-weight="800" fill="#be123c">${initials}</text>
+    
+    <!-- Company Name -->
+    <text class="font-base" x="98" y="45" font-size="22" font-weight="800" fill="#ffffff" letter-spacing="-0.3">${escapeXml(partnerName)}</text>
+
+    <!-- Status Badge -->
+    <rect x="${cardWidth - 36 - 150}" y="19" width="150" height="38" rx="19" fill="rgba(255, 255, 255, 0.2)" stroke="rgba(255, 255, 255, 0.3)" stroke-width="1" />
+    <circle cx="${cardWidth - 36 - 150 + 20}" cy="38" r="5" fill="${statusColor}" stroke="rgba(255,255,255,0.4)" stroke-width="2" />
+    <text class="font-base" x="${cardWidth - 36 - 150 + 34}" y="43" font-size="14" font-weight="700" fill="#ffffff">${escapeXml(statusText)}</text>
+
+    <!-- 2. Route Bar -->
+    <rect x="0" y="76" width="${cardWidth}" height="78" fill="#ffffff" />
+    <line x1="0" y1="154" x2="${cardWidth}" y2="154" stroke="#f1f5f9" stroke-width="1" />
+
+    <!-- Origin -->
+    <text class="font-base" x="40" y="103" font-size="11" font-weight="700" fill="#94a3b8" letter-spacing="1.5">KALKIŞ</text>
+    <text class="font-base" x="40" y="133" font-size="24" font-weight="800" fill="#0f172a" letter-spacing="-0.5">${escapeXml(originName)}</text>
+
+    <!-- Route Center Visual (Line + Bus Icon + Line) -->
+    <g transform="translate(${cardWidth / 2}, 115)">
+      <line x1="-70" y1="0" x2="-22" y2="0" stroke="url(#routeLeftGrad)" stroke-width="2.5" stroke-linecap="round" />
+      <g transform="translate(-12, -12)">
+        <path d="M4,16C4,17.1 4.9,18 6,18L6,19A1,1 0 0,0 7,20A1,1 0 0,0 8,19L8,18H16L16,19A1,1 0 0,0 17,20A1,1 0 0,0 18,19L18,18C19.1,18 20,17.1 20,16V6C20,3.5 16.41,2 12,2C7.59,2 4,3.5 4,6V16M7.5,13A1.5,1.5 0 0,1 6,11.5A1.5,1.5 0 0,1 7.5,10A1.5,1.5 0 0,1 9,11.5A1.5,1.5 0 0,1 7.5,13M16.5,13A1.5,1.5 0 0,1 15,11.5A1.5,1.5 0 0,1 16.5,10A1.5,1.5 0 0,1 18,11.5A1.5,1.5 0 0,1 16.5,13M18,7H6V4C6,4 7.5,3 12,3C16.5,3 18,4 18,4V7Z" fill="#e11d48" />
+      </g>
+      <line x1="22" y1="0" x2="70" y2="0" stroke="url(#routeRightGrad)" stroke-width="2.5" stroke-linecap="round" />
+    </g>
+
+    <!-- Destination -->
+    <text class="font-base" x="${cardWidth - 40}" y="103" text-anchor="end" font-size="11" font-weight="700" fill="#94a3b8" letter-spacing="1.5">VARIŞ</text>
+    <text class="font-base" x="${cardWidth - 40}" y="133" text-anchor="end" font-size="24" font-weight="800" fill="#0f172a" letter-spacing="-0.5">${escapeXml(destName)}</text>
+
+    <!-- 3. Three Info Cards -->
+    <!-- Card 1: Time -->
+    <g transform="translate(${card1X}, 168)">
+      <rect width="${cardItemWidth}" height="84" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" filter="url(#dropShadow)" />
+      <path d="M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22C6.47,22 2,17.5 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z" fill="#64748b" transform="translate(${cardItemWidth / 2 - 10}, 10) scale(0.85)" />
+      <text class="font-base" x="${cardItemWidth / 2}" y="55" text-anchor="middle" font-size="21" font-weight="800" fill="#0f172a">${escapeXml(departureTime)}</text>
+      <text class="font-base" x="${cardItemWidth / 2}" y="72" text-anchor="middle" font-size="12" font-weight="600" fill="#64748b">Kalkış Saati</text>
+    </g>
+
+    <!-- Card 2: Date -->
+    <g transform="translate(${card2X}, 168)">
+      <rect width="${cardItemWidth}" height="84" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" filter="url(#dropShadow)" />
+      <path d="M19,19H5V8H19M16,1V3H8V1H6V3H5C3.89,3 3,3.89 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.89 20.1,3 19,3H18V1M17,12H12V17H17V12Z" fill="#64748b" transform="translate(${cardItemWidth / 2 - 10}, 10) scale(0.85)" />
+      <text class="font-base" x="${cardItemWidth / 2}" y="55" text-anchor="middle" font-size="21" font-weight="800" fill="#0f172a">${escapeXml(formattedDate)}</text>
+      <text class="font-base" x="${cardItemWidth / 2}" y="72" text-anchor="middle" font-size="12" font-weight="600" fill="#64748b">${escapeXml(dayName)}</text>
+    </g>
+
+    <!-- Card 3: Price -->
+    <g transform="translate(${card3X}, 168)">
+      <rect width="${cardItemWidth}" height="84" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" filter="url(#dropShadow)" />
+      <circle cx="${cardItemWidth / 2}" cy="20" r="11" fill="#dcfce7" stroke="#bbf7d0" stroke-width="1" />
+      <text class="font-base" x="${cardItemWidth / 2}" y="24" text-anchor="middle" font-size="13" font-weight="800" fill="#15803d">₺</text>
+      <text class="font-base" x="${cardItemWidth / 2}" y="55" text-anchor="middle" font-size="21" font-weight="800" fill="#059669">${escapeXml(price)} ₺</text>
+      <text class="font-base" x="${cardItemWidth / 2}" y="72" text-anchor="middle" font-size="12" font-weight="600" fill="#64748b">Bilet Fiyatı</text>
+    </g>
+
+    <!-- 4. Seat Status Section Header -->
+    <g transform="translate(40, 268)">
+      <path d="M4,18V21H7V18H17V21H20V15H4V18M19,10H22V13H19V10M2,10H5V13H2V10M17,13H7V5A2,2 0 0,1 9,3H15A2,2 0 0,1 17,5V13Z" fill="#e11d48" transform="translate(0, 2) scale(0.85)" />
+      <text class="font-base" x="26" y="18" font-size="16" font-weight="800" fill="#1e293b">Koltuk Durumu</text>
+    </g>
+
+    <!-- Badges -->
+    <g transform="translate(${b1X}, 266)">
+      <rect width="${badge1W}" height="28" rx="14" fill="#dcfce7" stroke="#bbf7d0" stroke-width="1" />
+      <text class="font-base" x="${badge1W / 2}" y="19" text-anchor="middle" font-size="13" font-weight="700" fill="#15803d">Boş: ${availableSeats}</text>
+    </g>
+    <g transform="translate(${b2X}, 266)">
+      <rect width="${badge2W}" height="28" rx="14" fill="#ffe4e6" stroke="#fecdd3" stroke-width="1" />
+      <text class="font-base" x="${badge2W / 2}" y="19" text-anchor="middle" font-size="13" font-weight="700" fill="#be123c">Dolu: ${soldSeats}</text>
+    </g>
+    <g transform="translate(${b3X}, 266)">
+      <rect width="${badge3W}" height="28" rx="14" fill="#e0e7ff" stroke="#c7d2fe" stroke-width="1" />
+      <text class="font-base" x="${badge3W / 2}" y="19" text-anchor="middle" font-size="13" font-weight="700" fill="#3730a3">Toplam: ${totalSeats}</text>
+    </g>
+
+    <!-- Progress Bar -->
+    <g transform="translate(40, 305)">
+      <rect width="${cardWidth - 80}" height="6" rx="3" fill="#e2e8f0" />
+      <rect width="${Math.max(6, (cardWidth - 80) * (availablePercent / 100))}" height="6" rx="3" fill="url(#progressGrad)" />
+    </g>
+
+    <!-- 5. Bus Outline -->
+    <g transform="translate(${busX}, ${busY})">
+      <!-- Bus Shell -->
+      <rect width="${busWidth}" height="${busHeight}" rx="42" fill="#ffffff" stroke="#cbd5e1" stroke-width="2.5" filter="url(#dropShadow)" />
+      <!-- Steering Wheel Area -->
+      <g transform="translate(32, ${busHeight / 2})">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8 0-.55.06-1.09.17-1.61l4.88 2.82c-.03.26-.05.52-.05.79 0 1.66 1.34 3 3 3s3-1.34 3-3c0-.27-.02-.53-.05-.79l4.88-2.82c.11.52.17 1.06.17 1.61 0 4.41-3.59 8-8 8zm-6.22-11.45C6.72 6.96 9.17 6 12 6s5.28.96 6.22 2.55L13.5 11.23c-.45-.15-.96-.23-1.5-.23s-1.05.08-1.5.23L5.78 8.55z" fill="#94a3b8" transform="translate(-16, -16) scale(1.3)" />
+      </g>
+    </g>
+
+    <!-- Seats rendering -->
+    ${seatsSvg}
+
+    <!-- 6. Gender Legend -->
+    <g transform="translate(${cardWidth / 2 - 160}, ${legendY})">
+      <!-- Item 1: Boş -->
+      <rect x="0" y="0" width="16" height="16" rx="4" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+      <text class="font-base" x="22" y="13" font-size="13" font-weight="600" fill="#64748b">Boş Koltuk</text>
+
+      <!-- Item 2: Erkek -->
+      <rect x="110" y="0" width="16" height="16" rx="4" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5" />
+      <text class="font-base" x="132" y="13" font-size="13" font-weight="600" fill="#64748b">Erkek Dolu</text>
+
+      <!-- Item 3: Kadın -->
+      <rect x="220" y="0" width="16" height="16" rx="4" fill="#fdf2f8" stroke="#f472b6" stroke-width="1.5" />
+      <text class="font-base" x="242" y="13" font-size="13" font-weight="600" fill="#64748b">Kadın Dolu</text>
+    </g>
+
+    <!-- 7. Footer -->
+    <rect x="0" y="${footerY}" width="${cardWidth}" height="52" fill="#ffffff" />
+    <line x1="0" y1="${footerY}" x2="${cardWidth}" y2="${footerY}" stroke="#f1f5f9" stroke-width="1" />
+    
+    <text class="font-base" x="40" y="${footerY + 31}" font-size="13" font-weight="600" fill="#64748b">🚌 Obilet İzleyici</text>
+    <text class="font-base" x="${cardWidth - 40}" y="${footerY + 31}" text-anchor="end" font-size="13" font-weight="600" fill="#94a3b8">${escapeXml(dateFull)}</text>
+  </g>
+</svg>`;
+
+  return svg;
+}
+
+async function renderBusLayout(seats) {
+  // Maintained for backward compatibility
+  return { html: '', width: 0, height: 0 };
+}
+
+async function renderJourneyCard(params) {
+  const svg = buildJourneyCardSvg(params);
+  const resvg = new Resvg(svg, {
+    fitTo: {
+      mode: 'zoom',
+      value: 1.5 // Crisp retina quality
+    },
+    font: {
+      loadSystemFonts: true,
+      defaultFontFamily: 'Segoe UI'
     }
-  }
+  });
+  const pngData = resvg.render();
+  return pngData.asPng();
 }
 
 module.exports = {
@@ -457,6 +591,7 @@ module.exports = {
   parseSeats,
   generateBusLayoutText,
   formatJourneyCardText,
+  buildJourneyCardSvg,
   renderBusLayout,
   renderJourneyCard
 };
