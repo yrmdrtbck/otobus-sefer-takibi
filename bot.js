@@ -219,7 +219,7 @@ function buildJourneyListMessage(user, page = 0, sortBy = 'time', timeFilter = '
 // ==========================================
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
-  db.updateUser(chatId, { state: 'IDLE', temp: {} });
+  db.updateUser(chatId, { state: 'IDLE', temp: {} }, msg.from);
   setProcessing(chatId, false);
   bot.sendMessage(chatId, `🚌 *Obilet İzleyici Botuna Hoş Geldiniz!*\n\nBu bot ile otobüs seferlerini takip edebilir, koltuklar boşaldığında veya belirli bir doluluk oranına ulaştığında bildirim alabilirsiniz.\n\nYeni bir sefer incelemek veya alarm başlatmak için /sefer komutunu kullanın.\nAktif izlemelerinizi görmek için /listem komutunu kullanın.`, { parse_mode: 'Markdown' });
 });
@@ -234,7 +234,7 @@ bot.onText(/\/sefer/, async (msg) => {
     return;
   }
   const promptMsg = await bot.sendMessage(chatId, '📍 Nereden yola çıkacaksınız? (şehir veya ilçe adı)');
-  db.updateUser(chatId, { state: 'WAITING_ORIGIN', temp: { mode: 'SEFER', promptMsgId: promptMsg.message_id } });
+  db.updateUser(chatId, { state: 'WAITING_ORIGIN', temp: { mode: 'SEFER', promptMsgId: promptMsg.message_id } }, msg.from);
 });
 
 // ==========================================
@@ -242,6 +242,7 @@ bot.onText(/\/sefer/, async (msg) => {
 // ==========================================
 bot.onText(/\/listem/, (msg) => {
   const chatId = msg.chat.id;
+  db.getUser(chatId, msg.from);
   const alarms = db.getUserAlarms(chatId);
   if (alarms.length === 0) {
     bot.sendMessage(chatId, 'Şu anda aktif bir izlemeniz bulunmuyor.');
@@ -277,6 +278,7 @@ bot.on('callback_query', async (callbackQuery) => {
   const chatId = callbackQuery.message.chat.id;
   const data = callbackQuery.data;
   const messageId = callbackQuery.message.message_id;
+  db.getUser(chatId, callbackQuery.from);
 
   // "cal_ignore" → boş tıklama
   if (data === 'cal_ignore') {
@@ -1258,7 +1260,7 @@ bot.on('message', async (msg) => {
 
   if (!text || text.startsWith('/')) return; // Ignore commands here
 
-  const user = db.getUser(chatId);
+  const user = db.getUser(chatId, msg.from);
 
   // Processing lock kontrolü
   if (isProcessing(chatId)) {

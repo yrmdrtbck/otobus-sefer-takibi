@@ -23,18 +23,60 @@ function writeDB(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
 }
 
-function getUser(chatId) {
+function getUser(chatId, from = null) {
   const db = readDB();
+  if (!db.users) db.users = {};
+  
   if (!db.users[chatId]) {
-    db.users[chatId] = { state: 'IDLE', temp: {} };
+    db.users[chatId] = {
+      state: 'IDLE',
+      temp: {},
+      username: (from && from.username) ? `@${from.username}` : null,
+      firstName: (from && from.first_name) || null,
+      lastName: (from && from.last_name) || null,
+      updatedAt: new Date().toISOString()
+    };
     writeDB(db);
+  } else if (from) {
+    let updated = false;
+    const formattedUsername = from.username ? `@${from.username}` : db.users[chatId].username;
+    if (from.username && db.users[chatId].username !== formattedUsername) {
+      db.users[chatId].username = formattedUsername;
+      updated = true;
+    }
+    if (from.first_name && db.users[chatId].firstName !== from.first_name) {
+      db.users[chatId].firstName = from.first_name;
+      updated = true;
+    }
+    if (from.last_name && db.users[chatId].lastName !== from.last_name) {
+      db.users[chatId].lastName = from.last_name;
+      updated = true;
+    }
+    if (updated) {
+      db.users[chatId].updatedAt = new Date().toISOString();
+      writeDB(db);
+    }
   }
   return db.users[chatId];
 }
 
-function updateUser(chatId, data) {
+function updateUser(chatId, data, from = null) {
   const db = readDB();
-  db.users[chatId] = { ...db.users[chatId], ...data };
+  if (!db.users) db.users = {};
+  
+  const existing = db.users[chatId] || { state: 'IDLE', temp: {} };
+  const username = (from && from.username) ? `@${from.username}` : existing.username;
+  const firstName = (from && from.first_name) || existing.firstName;
+  const lastName = (from && from.last_name) || existing.lastName;
+
+  db.users[chatId] = {
+    ...existing,
+    ...data,
+    username: username || null,
+    firstName: firstName || null,
+    lastName: lastName || null,
+    updatedAt: new Date().toISOString()
+  };
   writeDB(db);
 }
 
