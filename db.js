@@ -57,12 +57,40 @@ function removeAlarm(id) {
   return false;
 }
 
+function cleanupExpiredAlarms() {
+  const db = readDB();
+  if (!db.alarms || db.alarms.length === 0) return [];
+  
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+  const currentHour = now.getHours() + now.getMinutes() / 60;
+
+  const initialCount = db.alarms.length;
+  db.alarms = db.alarms.filter(a => {
+    if (!a.date) return false;
+    if (a.date < todayStr) return false;
+    if (a.date === todayStr && a.departure) {
+      const depHour = parseInt(a.departure.split(':')[0], 10) + parseInt(a.departure.split(':')[1] || 0, 10) / 60;
+      if (currentHour > depHour + 3) return false;
+    }
+    return true;
+  });
+
+  if (db.alarms.length !== initialCount) {
+    console.log(`[DB] Cleaned up ${initialCount - db.alarms.length} expired alarm(s).`);
+    writeDB(db);
+  }
+  return db.alarms;
+}
+
 function getAlarms() {
+  cleanupExpiredAlarms();
   const db = readDB();
   return db.alarms || [];
 }
 
 function getUserAlarms(chatId) {
+  cleanupExpiredAlarms();
   const db = readDB();
   return (db.alarms || []).filter(a => a.chatId === chatId);
 }
@@ -73,5 +101,6 @@ module.exports = {
   addAlarm,
   removeAlarm,
   getAlarms,
-  getUserAlarms
+  getUserAlarms,
+  cleanupExpiredAlarms
 };

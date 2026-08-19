@@ -82,19 +82,43 @@ async function smartCitySearch(query) {
 }
 
 // ==========================================
-// Yardımcı: Sefer listesi oluşturucu (pagination + sort)
+// ==========================================
+// Yardımcı: Sefer listesi oluşturucu (pagination + sort + filter)
 // ==========================================
 const JOURNEYS_PER_PAGE = 5;
 
-function buildJourneyListMessage(user, page, sortBy) {
+function buildJourneyListMessage(user, page = 0, sortBy = 'time', timeFilter = 'all', only2plus1 = false) {
   const allJourneys = user.temp.allJourneys || [];
+  const is2plus1 = only2plus1 === true || only2plus1 === '1' || only2plus1 === 'true' || only2plus1 === 1;
+
+  // Filtreleme - 1. Zaman Filtresi
+  let filtered = [...allJourneys];
+  if (timeFilter === 'day') {
+    filtered = filtered.filter(j => {
+      const h = parseInt(j.journey.departure.split('T')[1].substring(0, 2), 10);
+      return h >= 6 && h < 18;
+    });
+  } else if (timeFilter === 'night') {
+    filtered = filtered.filter(j => {
+      const h = parseInt(j.journey.departure.split('T')[1].substring(0, 2), 10);
+      return h >= 18 || h < 6;
+    });
+  }
+
+  // Filtreleme - 2. 2+1 Otobüs Filtresi (Bağımsız)
+  if (is2plus1) {
+    filtered = filtered.filter(j => {
+      const busType = (j['bus-type'] || '').toLowerCase();
+      const desc = (j.journey && j.journey.description || '').toLowerCase();
+      return busType.includes('2+1') || desc.includes('2+1');
+    });
+  }
 
   // Sıralama
-  let sorted = [...allJourneys];
+  let sorted = [...filtered];
   if (sortBy === 'price') {
     sorted.sort((a, b) => a.journey['internet-price'] - b.journey['internet-price']);
   } else {
-    // Varsayılan: saate göre
     sorted.sort((a, b) => {
       const ta = a.journey.departure.split('T')[1] || '';
       const tb = b.journey.departure.split('T')[1] || '';
@@ -102,24 +126,30 @@ function buildJourneyListMessage(user, page, sortBy) {
     });
   }
 
-  const totalPages = Math.ceil(sorted.length / JOURNEYS_PER_PAGE);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / JOURNEYS_PER_PAGE));
   if (page < 0) page = 0;
   if (page >= totalPages) page = totalPages - 1;
 
   const start = page * JOURNEYS_PER_PAGE;
   const pageJourneys = sorted.slice(start, start + JOURNEYS_PER_PAGE);
 
-  // journeyMap güncelle (global index kullan)
   const journeyMap = {};
   sorted.forEach((j, i) => { journeyMap[i + 1] = j; });
 
   const dateStr = user.temp.date;
   const dateTurkish = calendar.formatDateTurkish(dateStr);
   const sortLabel = sortBy === 'price' ? '💰 Fiyat' : '🕐 Saat';
+  const timeLabel = timeFilter === 'day' ? '🌅 Gündüz' : (timeFilter === 'night' ? '🌙 Gece' : 'Tümü');
+  const typeLabel = is2plus1 ? ' • ⭐ 2+1' : '';
 
   let listTxt = `🚌 *${user.temp.originName} → ${user.temp.destName}*\n`;
   listTxt += `📅 ${dateTurkish} • Sıralama: ${sortLabel}\n`;
+  listTxt += `🔍 Filtre: ${timeLabel}${typeLabel}\n`;
   listTxt += `📄 Sayfa ${page + 1}/${totalPages} (${sorted.length} sefer)\n\n`;
+
+  if (sorted.length === 0) {
+    listTxt += `_Seçilen filtrelere uygun sefer bulunamadı. Lütfen filtreleri değiştirin._\n\n`;
+  }
 
   const journeyButtons = [];
 
@@ -128,39 +158,57 @@ function buildJourneyListMessage(user, page, sortBy) {
     const departureTime = j.journey.departure.split('T')[1].substring(0, 5);
     const price = j.journey['internet-price'];
     const partnerName = j['partner-name'] || 'Firma';
+    const busType = (j['bus-type'] || '').includes('2+1') ? ' [2+1]' : '';
 
-    listTxt += `*${globalNum}.* 🏢 ${partnerName}\n    🕐 ${departureTime} • 💰 ${price} TL\n\n`;
+    listTxt += `*${globalNum}.* 🏢 ${partnerName}${busType}\n    🕐 ${departureTime} • 💰 ${price} TL\n\n`;
 
     journeyButtons.push([{
-      text: `${globalNum}. ${partnerName} - ${departureTime} (${price} TL)`,
+      text: `${globalNum}. ${partnerName}${busType} - ${departureTime} (${price} TL)`,
       callback_data: `journey_${globalNum}`
     }]);
   });
 
+  const p2p = is2plus1 ? 1 : 0;
+
   // Navigasyon satırı
   const navRow = [];
   if (page > 0) {
-    navRow.push({ text: '◀️ Önceki', callback_data: `jpage_${page - 1}_${sortBy}` });
+    navRow.push({ text: '◀️ Önceki', callback_data: `jpage_${page - 1}_${sortBy}_${timeFilter}_${p2p}` });
   }
   if (page < totalPages - 1) {
-    navRow.push({ text: 'Sonraki ▶️', callback_data: `jpage_${page + 1}_${sortBy}` });
+    navRow.push({ text: 'Sonraki ▶️', callback_data: `jpage_${page + 1}_${sortBy}_${timeFilter}_${p2p}` });
   }
   if (navRow.length > 0) journeyButtons.push(navRow);
+
+  // 1. Zaman Filtresi Butonları (Tümü / Gündüz / Gece)
+  const timeRow = [];
+  timeRow.push({ text: timeFilter === 'all' ? '✅ Tümü' : 'Tümü', callback_data: `jfilt_0_${sortBy}_all_${p2p}` });
+  timeRow.push({ text: timeFilter === 'day' ? '✅ 🌅 Gündüz' : '🌅 Gündüz', callback_data: `jfilt_0_${sortBy}_day_${p2p}` });
+  timeRow.push({ text: timeFilter === 'night' ? '✅ 🌙 Gece' : '🌙 Gece', callback_data: `jfilt_0_${sortBy}_night_${p2p}` });
+  journeyButtons.push(timeRow);
+
+  // 2. 2+1 Otobüs Filtresi Butonu (Ayrı Aç/Kapa Checkbox)
+  const toggle2p = is2plus1 ? 0 : 1;
+  const busTypeRow = [{
+    text: is2plus1 ? '✅ ⭐ Sadece 2+1 Otobüsler' : '⭐ Sadece 2+1 Otobüsler',
+    callback_data: `jfilt_0_${sortBy}_${timeFilter}_${toggle2p}`
+  }];
+  journeyButtons.push(busTypeRow);
 
   // Sıralama butonları
   const sortRow = [];
   if (sortBy !== 'time') {
-    sortRow.push({ text: '🕐 Saate Göre Sırala', callback_data: `jsort_0_time` });
+    sortRow.push({ text: '🕐 Saate Göre Sırala', callback_data: `jsort_0_time_${timeFilter}_${p2p}` });
   }
   if (sortBy !== 'price') {
-    sortRow.push({ text: '💰 Fiyata Göre Sırala', callback_data: `jsort_0_price` });
+    sortRow.push({ text: '💰 Fiyata Göre Sırala', callback_data: `jsort_0_price_${timeFilter}_${p2p}` });
   }
   journeyButtons.push(sortRow);
 
   // İptal
   journeyButtons.push([{ text: '❌ İptal', callback_data: 'action_cancel' }]);
 
-  return { text: listTxt + 'Lütfen bir sefer seçin:', buttons: journeyButtons, journeyMap };
+  return { text: listTxt + 'Lütfen bir sefer seçin:', buttons: journeyButtons, journeyMap, filteredCount: sorted.length };
 }
 
 // ==========================================
@@ -199,11 +247,20 @@ bot.onText(/\/listem/, (msg) => {
   let txt = '📝 *Aktif İzlemeleriniz:*\n\n';
   const inline_keyboard = [];
   alarms.forEach((a, i) => {
-    txt += `${i + 1}. *${a.busName}* - ${a.date} ${a.departure}\n`;
+    const formattedDate = a.date && a.date.includes('-') ? calendar.formatDateTurkish(a.date) : a.date;
+    const routeStr = a.originName && a.destName ? ` (${a.originName} → ${a.destName})` : '';
+    txt += `${i + 1}. *${a.busName}*${routeStr}\n`;
+    txt += `   📅 ${formattedDate} ${a.departure ? 'saat ' + a.departure : ''}\n`;
     if (a.type === 'CAPACITY') {
-      txt += `   └ Kapasite: ${a.capacityLimit} veya daha az koltuk kalınca haber ver.\n`;
+      txt += `   └ 📊 Kapasite: ${a.capacityLimit} veya daha az koltuk kalınca haber ver.\n`;
     } else if (a.type === 'ANY_SEAT_EMPTY') {
-      txt += `   └ Herhangi bir koltuk boşaldığında haber ver.\n`;
+      txt += `   └ 💺 Herhangi bir koltuk boşaldığında haber ver.\n`;
+    } else if (a.type === 'SINGLE_SEAT_EMPTY') {
+      txt += `   └ 👑 Tekli koltuk boşaldığında haber ver.\n`;
+    } else if (a.type === 'PRICE_DROP') {
+      txt += `   └ 💰 Fiyat düştüğünde (${a.initialPrice} ₺ altına inince) haber ver.\n`;
+    } else if (a.type === 'SEAT_EMPTY') {
+      txt += `   └ 🎯 ${a.seatNum} numaralı koltuk boşaldığında haber ver.\n`;
     }
     inline_keyboard.push([{ text: `❌ ${i + 1}. İzleyiciyi Sil`, callback_data: `alarm_delete_${a.id}` }]);
   });
@@ -283,11 +340,11 @@ bot.on('callback_query', async (callbackQuery) => {
 
       // Sefer listesi - pagination ile
       const tempUser = { temp: { ...user.temp, date: dateStr, allJourneys: journeys } };
-      const { text: listTxt, buttons: journeyButtons, journeyMap } = buildJourneyListMessage(tempUser, 0, 'time');
+      const { text: listTxt, buttons: journeyButtons, journeyMap } = buildJourneyListMessage(tempUser, 0, 'time', 'all', false);
 
       db.updateUser(chatId, {
         state: 'WAITING_JOURNEY',
-        temp: { ...user.temp, date: dateStr, allJourneys: journeys, journeyMap, currentPage: 0, sortBy: 'time' }
+        temp: { ...user.temp, date: dateStr, allJourneys: journeys, journeyMap, currentPage: 0, sortBy: 'time', timeFilter: 'all', only2plus1: false }
       });
 
       bot.sendMessage(chatId, listTxt, {
@@ -305,11 +362,13 @@ bot.on('callback_query', async (callbackQuery) => {
     return;
   }
 
-  // Sayfa değiştirme: jpage_{page}_{sortBy}
+  // Sayfa değiştirme: jpage_{page}_{sortBy}_{timeFilter}_{p2p}
   if (data.startsWith('jpage_')) {
     const parts = data.split('_');
     const page = parseInt(parts[1]);
-    const sortBy = parts[2];
+    const sortBy = parts[2] || 'time';
+    const timeFilter = parts[3] || 'all';
+    const only2plus1 = parts[4] === '1';
     const user = db.getUser(chatId);
 
     if (user.state !== 'WAITING_JOURNEY') {
@@ -317,11 +376,11 @@ bot.on('callback_query', async (callbackQuery) => {
       return;
     }
 
-    const { text: listTxt, buttons: journeyButtons, journeyMap } = buildJourneyListMessage(user, page, sortBy);
+    const { text: listTxt, buttons: journeyButtons, journeyMap } = buildJourneyListMessage(user, page, sortBy, timeFilter, only2plus1);
 
     db.updateUser(chatId, {
       state: 'WAITING_JOURNEY',
-      temp: { ...user.temp, journeyMap, currentPage: page, sortBy: sortBy }
+      temp: { ...user.temp, journeyMap, currentPage: page, sortBy, timeFilter, only2plus1 }
     });
 
     try {
@@ -337,11 +396,13 @@ bot.on('callback_query', async (callbackQuery) => {
     return;
   }
 
-  // Sıralama değiştirme: jsort_{page}_{sortBy}
+  // Sıralama değiştirme: jsort_{page}_{sortBy}_{timeFilter}_{p2p}
   if (data.startsWith('jsort_')) {
     const parts = data.split('_');
     const page = parseInt(parts[1]);
-    const sortBy = parts[2];
+    const sortBy = parts[2] || 'time';
+    const timeFilter = parts[3] || 'all';
+    const only2plus1 = parts[4] === '1';
     const user = db.getUser(chatId);
 
     if (user.state !== 'WAITING_JOURNEY') {
@@ -349,13 +410,12 @@ bot.on('callback_query', async (callbackQuery) => {
       return;
     }
 
-    // Sıralama değiştiğinde her zaman ilk sayfaya dön
     const newPage = 0;
-    const { text: listTxt, buttons: journeyButtons, journeyMap } = buildJourneyListMessage(user, newPage, sortBy);
+    const { text: listTxt, buttons: journeyButtons, journeyMap } = buildJourneyListMessage(user, newPage, sortBy, timeFilter, only2plus1);
 
     db.updateUser(chatId, {
       state: 'WAITING_JOURNEY',
-      temp: { ...user.temp, journeyMap, currentPage: newPage, sortBy: sortBy }
+      temp: { ...user.temp, journeyMap, currentPage: newPage, sortBy, timeFilter, only2plus1 }
     });
 
     try {
@@ -368,6 +428,43 @@ bot.on('callback_query', async (callbackQuery) => {
     } catch (e) { }
 
     await bot.answerCallbackQuery(callbackQuery.id, { text: sortBy === 'price' ? 'Fiyata göre sıralandı' : 'Saate göre sıralandı' });
+    return;
+  }
+
+  // Filtreleme değiştirme: jfilt_{page}_{sortBy}_{timeFilter}_{p2p}
+  if (data.startsWith('jfilt_')) {
+    const parts = data.split('_');
+    const page = parseInt(parts[1]);
+    const sortBy = parts[2] || 'time';
+    const timeFilter = parts[3] || 'all';
+    const only2plus1 = parts[4] === '1';
+    const user = db.getUser(chatId);
+
+    if (user.state !== 'WAITING_JOURNEY') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Bu işlem artık geçerli değil.' });
+      return;
+    }
+
+    const newPage = 0;
+    const { text: listTxt, buttons: journeyButtons, journeyMap, filteredCount } = buildJourneyListMessage(user, newPage, sortBy, timeFilter, only2plus1);
+
+    db.updateUser(chatId, {
+      state: 'WAITING_JOURNEY',
+      temp: { ...user.temp, journeyMap, currentPage: newPage, sortBy, timeFilter, only2plus1 }
+    });
+
+    try {
+      await bot.editMessageText(listTxt, {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: journeyButtons }
+      });
+    } catch (e) { }
+
+    const tLabel = timeFilter === 'day' ? 'Gündüz' : (timeFilter === 'night' ? 'Gece' : 'Tümü');
+    const typeText = only2plus1 ? ' + 2+1' : '';
+    await bot.answerCallbackQuery(callbackQuery.id, { text: `${tLabel}${typeText} filtrelendi (${filteredCount} sefer)` });
     return;
   }
 
@@ -435,27 +532,44 @@ bot.on('callback_query', async (callbackQuery) => {
 
       // Premium kart oluştur (otobüs yerleşimi dahil)
       const departureTime = selectedJourney.journey.departure.split('T')[1].substring(0, 5);
+      const arrivalTime = selectedJourney.journey.arrival ? selectedJourney.journey.arrival.split('T')[1].substring(0, 5) : '';
+      let durationStr = '';
+      if (selectedJourney.journey.duration) {
+        const parts = selectedJourney.journey.duration.split(':');
+        const h = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10);
+        if (h > 0 && m > 0) durationStr = `${h} sa ${m} dk`;
+        else if (h > 0) durationStr = `${h} saat`;
+        else if (m > 0) durationStr = `${m} dk`;
+      }
       const price = selectedJourney.journey['internet-price'];
+      const buyUrl = `https://www.obilet.com/seferler/${originId}-${destId}/${date}/${jId}`;
 
       const cardMessageText = obiletApi.formatJourneyCardText({
         partnerName: selectedJourney['partner-name'] || 'Firma',
         originName: user.temp.originName,
         destName: user.temp.destName,
         departureTime,
+        arrivalTime,
+        durationStr,
         date,
         price,
         totalSeats,
         availableSeats,
-        seatData
+        seatData,
+        buyUrl
       });
 
       bot.editMessageText('Görsel hazırlanıyor, lütfen bekleyin... 🎨', { chat_id: chatId, message_id: statusMsg.message_id }).catch(() => {});
 
       const imageBuffer = await obiletApi.renderJourneyCard({
+        partnerId: selectedJourney['partner-id'],
         partnerName: selectedJourney['partner-name'] || 'Firma',
         originName: user.temp.originName,
         destName: user.temp.destName,
         departureTime,
+        arrivalTime,
+        durationStr,
         date,
         price,
         totalSeats,
@@ -470,24 +584,37 @@ bot.on('callback_query', async (callbackQuery) => {
         await bot.sendMessage(chatId, cardMessageText, { parse_mode: 'Markdown' });
       }
 
+      const hasSingleSeats = seatData.some(s => s.isSingleSeat);
+
       db.updateUser(chatId, {
         state: 'WAITING_ALARM_TYPE',
         temp: {
           ...user.temp,
+          selectedJourney,
           journeyId: selectedJourney.id,
           busName: selectedJourney['partner-name'],
+          partnerId: selectedJourney['partner-id'],
+          price,
           departure: departureTime,
+          arrivalTime,
+          durationStr,
+          hasSingleSeats,
           initialAvailable: availableSeats,
-          soldSeats: seatData.filter(s => !s.available).map(s => s.number)
+          soldSeats: seatData.filter(s => !s.available).map(s => s.number),
+          soldSingleSeats: seatData.filter(s => s.isSingleSeat && !s.available).map(s => s.number)
         }
       });
 
       const doneButtons = {
         inline_keyboard: [
+          [{ text: '🎟️ Bilet Satın Al (obilet.com)', url: buyUrl }],
           [{ text: '💺 Herhangi bir koltuk boşaldığında bildirim al', callback_data: 'alarm_empty' }],
+          ...(hasSingleSeats ? [[{ text: '👑 Sadece TEKLİ koltuk boşaldığında bildirim al', callback_data: 'alarm_single_empty' }]] : []),
           [{ text: '📊 X adet koltuk dolduğunda bildirim al', callback_data: 'alarm_capacity' }],
-          [{ text: '🔄 Başka bir sefer incele', callback_data: 'action_change_date' }],
-          [{ text: '🏠 Ana Menüye Dön', callback_data: 'action_cancel' }]
+          [{ text: '💰 Bilet fiyatı düştüğünde bildirim al', callback_data: 'alarm_price_drop' }],
+          [{ text: '🔄 Seferi Yenile', callback_data: 'journey_refresh' }],
+          [{ text: '🚌 Aynı tarihte farklı sefer incele', callback_data: 'action_back_journeys' }],
+          [{ text: '📅 Farklı bir tarih incele', callback_data: 'action_change_date' }]
         ]
       };
       bot.sendMessage(chatId, '✅ Sefer detayları yüklendi. Ne yapmak istersiniz?', {
@@ -511,7 +638,7 @@ bot.on('callback_query', async (callbackQuery) => {
       await bot.answerCallbackQuery(callbackQuery.id, { text: 'Bu işlem artık geçerli değil.' });
       return;
     }
-    db.updateUser(chatId, { state: 'WAITING_CAPACITY', temp: { ...user.temp, alarmType: 'CAPACITY' } });
+    db.updateUser(chatId, { state: 'WAITING_CAPACITY', temp: { ...user.temp, alarmType: 'CAPACITY', promptMsgId: messageId } });
 
     try {
       await bot.editMessageText('📊 *Kapasite Alarmı* seçildi.\n\nOtobüste kaç boş koltuk veya daha azı kaldığında haber verelim?\n(Örn: 5 yazarsanız 5 veya daha az koltuk kaldığında uyarı alırsınız)', {
@@ -555,21 +682,126 @@ bot.on('callback_query', async (callbackQuery) => {
       journeyId: user.temp.journeyId,
       originId: user.temp.originId,
       destinationId: user.temp.destinationId,
+      originName: user.temp.originName,
+      destName: user.temp.destName,
       date: user.temp.date,
       busName: user.temp.busName,
       departure: user.temp.departure
     });
     db.updateUser(chatId, { state: 'IDLE', temp: {} });
 
+    const formattedDate = user.temp.date && user.temp.date.includes('-') ? calendar.formatDateTurkish(user.temp.date) : user.temp.date;
+    const timeStr = user.temp.departure ? ` saat *${user.temp.departure}*` : '';
+    const busName = user.temp.busName || 'Otobüs';
+    const msgTxt = `✅ *Koltuk Boşalma Alarmı Kuruldu!*\n\n*${formattedDate}* tarihindeki${timeStr} *${busName}* seferinde herhangi bir bilet iptal edilip boş koltuk açıldığında size haber vereceğim.`;
+
     try {
-      await bot.editMessageText(
-        `✅ *Koltuk Boşalma Alarmı Kuruldu!*\n\n${user.temp.date} tarihindeki ${user.temp.busName} seferinde herhangi bir bilet iptal edilip boş koltuk açıldığında size haber vereceğim.`,
-        { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' }
-      );
+      await bot.editMessageText(msgTxt, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
     } catch (e) {
-      bot.sendMessage(chatId, `✅ *Koltuk Boşalma Alarmı Kuruldu!*\n\n${user.temp.date} tarihindeki ${user.temp.busName} seferinde herhangi bir bilet iptal edilip boş koltuk açıldığında size haber vereceğim.`, { parse_mode: 'Markdown' });
+      bot.sendMessage(chatId, msgTxt, { parse_mode: 'Markdown' });
     }
     await bot.answerCallbackQuery(callbackQuery.id, { text: '✅ Alarm kuruldu!' });
+    return;
+  }
+
+  // Tekli koltuk alarmı
+  if (data === 'alarm_single_empty') {
+    const user = db.getUser(chatId);
+    if (user.state !== 'WAITING_ALARM_TYPE') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Bu işlem artık geçerli değil.' });
+      return;
+    }
+
+    const alarms = db.getUserAlarms(chatId);
+    if (alarms.length >= 3) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'En fazla 3 adet izleyici kurabilirsiniz. Lütfen /listem menüsünden silin.', show_alert: true });
+      return;
+    }
+    const exists = alarms.find(a => a.journeyId === user.temp.journeyId && a.type === 'SINGLE_SEAT_EMPTY');
+    if (exists) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Bu sefer için zaten Tekli Koltuk alarmınız var!', show_alert: true });
+      return;
+    }
+
+    db.addAlarm({
+      chatId: chatId,
+      type: 'SINGLE_SEAT_EMPTY',
+      capacityLimit: null,
+      seatNum: null,
+      soldSingleSeats: user.temp.soldSingleSeats,
+      initialAvailable: user.temp.initialAvailable,
+      journeyId: user.temp.journeyId,
+      originId: user.temp.originId,
+      destinationId: user.temp.destinationId,
+      originName: user.temp.originName,
+      destName: user.temp.destName,
+      date: user.temp.date,
+      busName: user.temp.busName,
+      departure: user.temp.departure
+    });
+    db.updateUser(chatId, { state: 'IDLE', temp: {} });
+
+    const formattedDate = user.temp.date && user.temp.date.includes('-') ? calendar.formatDateTurkish(user.temp.date) : user.temp.date;
+    const timeStr = user.temp.departure ? ` saat *${user.temp.departure}*` : '';
+    const busName = user.temp.busName || 'Otobüs';
+    const msgTxt = `👑 *Tekli Koltuk Alarmı Kuruldu!*\n\n*${formattedDate}* tarihindeki${timeStr} *${busName}* seferinde herhangi bir **tekli koltuk** boşaldığında size anında haber vereceğim.`;
+
+    try {
+      await bot.editMessageText(msgTxt, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+    } catch (e) {
+      bot.sendMessage(chatId, msgTxt, { parse_mode: 'Markdown' });
+    }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: '👑 Tekli koltuk alarmı kuruldu!' });
+    return;
+  }
+
+  // Fiyat düşüşü alarmı
+  if (data === 'alarm_price_drop') {
+    const user = db.getUser(chatId);
+    if (user.state !== 'WAITING_ALARM_TYPE') {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Bu işlem artık geçerli değil.' });
+      return;
+    }
+
+    const alarms = db.getUserAlarms(chatId);
+    if (alarms.length >= 3) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'En fazla 3 adet izleyici kurabilirsiniz. Lütfen /listem menüsünden silin.', show_alert: true });
+      return;
+    }
+    const exists = alarms.find(a => a.journeyId === user.temp.journeyId && a.type === 'PRICE_DROP');
+    if (exists) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Bu sefer için zaten Fiyat Düşüşü alarmınız var!', show_alert: true });
+      return;
+    }
+
+    db.addAlarm({
+      chatId: chatId,
+      type: 'PRICE_DROP',
+      capacityLimit: null,
+      seatNum: null,
+      initialPrice: user.temp.price,
+      journeyId: user.temp.journeyId,
+      originId: user.temp.originId,
+      destinationId: user.temp.destinationId,
+      originName: user.temp.originName,
+      destName: user.temp.destName,
+      date: user.temp.date,
+      busName: user.temp.busName,
+      departure: user.temp.departure
+    });
+    db.updateUser(chatId, { state: 'IDLE', temp: {} });
+
+    const formattedDate = user.temp.date && user.temp.date.includes('-') ? calendar.formatDateTurkish(user.temp.date) : user.temp.date;
+    const timeStr = user.temp.departure ? ` saat *${user.temp.departure}*` : '';
+    const busName = user.temp.busName || 'Otobüs';
+    const msgTxt = `💰 *Fiyat Düşüşü Alarmı Kuruldu!*\n\n*${formattedDate}* tarihindeki${timeStr} *${busName}* seferinin bilet fiyatı *${user.temp.price} ₺* altına düştüğünde size haber vereceğim.`;
+
+    try {
+      await bot.editMessageText(msgTxt, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+    } catch (e) {
+      bot.sendMessage(chatId, msgTxt, { parse_mode: 'Markdown' });
+    }
+    await bot.answerCallbackQuery(callbackQuery.id, { text: '💰 Fiyat düşüşü alarmı kuruldu!' });
     return;
   }
 
@@ -588,17 +820,235 @@ bot.on('callback_query', async (callbackQuery) => {
       let txt = '📝 *Aktif İzlemeleriniz:*\n\n';
       const inline_keyboard = [];
       alarms.forEach((a, i) => {
-        txt += `${i + 1}. *${a.busName}* - ${a.date} ${a.departure}\n`;
+        const formattedDate = a.date && a.date.includes('-') ? calendar.formatDateTurkish(a.date) : a.date;
+        const routeStr = a.originName && a.destName ? ` (${a.originName} → ${a.destName})` : '';
+        txt += `${i + 1}. *${a.busName}*${routeStr}\n`;
+        txt += `   📅 ${formattedDate} ${a.departure ? 'saat ' + a.departure : ''}\n`;
         if (a.type === 'CAPACITY') {
-          txt += `   └ Kapasite: ${a.capacityLimit} veya daha az koltuk kalınca.\n`;
+          txt += `   └ 📊 Kapasite: ${a.capacityLimit} veya daha az koltuk kalınca.\n`;
         } else if (a.type === 'ANY_SEAT_EMPTY') {
-          txt += `   └ Koltuk boşaldığında.\n`;
+          txt += `   └ 💺 Herhangi bir koltuk boşaldığında.\n`;
+        } else if (a.type === 'SINGLE_SEAT_EMPTY') {
+          txt += `   └ 👑 Tekli koltuk boşaldığında.\n`;
+        } else if (a.type === 'PRICE_DROP') {
+          txt += `   └ 💰 Fiyat düştüğünde (${a.initialPrice} ₺ altına inince).\n`;
+        } else if (a.type === 'SEAT_EMPTY') {
+          txt += `   └ 🎯 ${a.seatNum} numaralı koltuk boşaldığında.\n`;
         }
         inline_keyboard.push([{ text: `❌ ${i + 1}. İzleyiciyi Sil`, callback_data: `alarm_delete_${a.id}` }]);
       });
       bot.editMessageText(txt, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard } });
     }
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'İzleyici silindi.' });
+    return;
+  }
+
+  // Sefer Yenileme (Koltuk durumunu ve görseli güncelle)
+  if (data === 'journey_refresh') {
+    const user = db.getUser(chatId);
+    if (!user.temp || !user.temp.journeyId) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Yenilenecek sefer bulunamadı.' });
+      return;
+    }
+
+    if (isProcessing(chatId)) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'İşlem devam ediyor, bekleyin...' });
+      return;
+    }
+
+    setProcessing(chatId, true);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: '🔄 Sefer ve koltuk durumu güncelleniyor...' });
+
+    try {
+      const statusMsg = await bot.sendMessage(chatId, '🔍 Güncel koltuk durumu sorgulanıyor... ⏳');
+
+      const jId = user.temp.journeyId;
+      const originId = user.temp.originId;
+      const destId = user.temp.destinationId;
+      const date = user.temp.date;
+      const selectedJourney = user.temp.selectedJourney || (user.temp.journeyMap && Object.values(user.temp.journeyMap).find(j => j.id === jId));
+
+      const details = await obiletApi.getJourneyDetails(jId, originId, destId, date);
+      let totalSeats = 0;
+      let availableSeats = 0;
+      let seatData = [];
+
+      if (details && details.bus) {
+        const seats = obiletApi.parseSeats(details.bus);
+        seatData = seats;
+        totalSeats = seats.length;
+        availableSeats = seats.filter(s => s.available).length;
+      } else {
+        bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+        bot.sendMessage(chatId, '❌ Güncel sefer detayı alınamadı.', {
+          reply_markup: getErrorButtons(user)
+        });
+        setProcessing(chatId, false);
+        return;
+      }
+
+      const departureTime = selectedJourney ? selectedJourney.journey.departure.split('T')[1].substring(0, 5) : user.temp.departure;
+      const arrivalTime = selectedJourney && selectedJourney.journey.arrival ? selectedJourney.journey.arrival.split('T')[1].substring(0, 5) : (user.temp.arrivalTime || '');
+      let durationStr = user.temp.durationStr || '';
+      if (selectedJourney && selectedJourney.journey.duration) {
+        const parts = selectedJourney.journey.duration.split(':');
+        const h = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10);
+        if (h > 0 && m > 0) durationStr = `${h} sa ${m} dk`;
+        else if (h > 0) durationStr = `${h} saat`;
+        else if (m > 0) durationStr = `${m} dk`;
+      }
+      const price = selectedJourney ? selectedJourney.journey['internet-price'] : user.temp.price;
+      const partnerId = selectedJourney ? selectedJourney['partner-id'] : user.temp.partnerId;
+      const partnerName = selectedJourney ? selectedJourney['partner-name'] : user.temp.busName;
+      const buyUrl = `https://www.obilet.com/seferler/${originId}-${destId}/${date}/${jId}`;
+
+      const cardMessageText = obiletApi.formatJourneyCardText({
+        partnerName: partnerName || 'Firma',
+        originName: user.temp.originName,
+        destName: user.temp.destName,
+        departureTime,
+        arrivalTime,
+        durationStr,
+        date,
+        price,
+        totalSeats,
+        availableSeats,
+        seatData,
+        buyUrl
+      });
+
+      bot.editMessageText('Görsel güncelleniyor, lütfen bekleyin... 🎨', { chat_id: chatId, message_id: statusMsg.message_id }).catch(() => {});
+
+      const imageBuffer = await obiletApi.renderJourneyCard({
+        partnerId: partnerId,
+        partnerName: partnerName || 'Firma',
+        originName: user.temp.originName,
+        destName: user.temp.destName,
+        departureTime,
+        arrivalTime,
+        durationStr,
+        date,
+        price,
+        totalSeats,
+        availableSeats,
+        seatData
+      });
+
+      bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+      if (imageBuffer) {
+        await bot.sendPhoto(chatId, imageBuffer, {}, { filename: 'sefer.png', contentType: 'image/png' });
+      } else {
+        await bot.sendMessage(chatId, cardMessageText, { parse_mode: 'Markdown' });
+      }
+
+      const hasSingleSeats = seatData.some(s => s.isSingleSeat);
+
+      db.updateUser(chatId, {
+        state: 'WAITING_ALARM_TYPE',
+        temp: {
+          ...user.temp,
+          selectedJourney,
+          journeyId: jId,
+          busName: partnerName,
+          partnerId,
+          price,
+          departure: departureTime,
+          arrivalTime,
+          durationStr,
+          hasSingleSeats,
+          initialAvailable: availableSeats,
+          soldSeats: seatData.filter(s => !s.available).map(s => s.number),
+          soldSingleSeats: seatData.filter(s => s.isSingleSeat && !s.available).map(s => s.number)
+        }
+      });
+
+      const doneButtons = {
+        inline_keyboard: [
+          [{ text: '🎟️ Bilet Satın Al (obilet.com)', url: buyUrl }],
+          [{ text: '💺 Herhangi bir koltuk boşaldığında bildirim al', callback_data: 'alarm_empty' }],
+          ...(hasSingleSeats ? [[{ text: '👑 Sadece TEKLİ koltuk boşaldığında bildirim al', callback_data: 'alarm_single_empty' }]] : []),
+          [{ text: '📊 X adet koltuk dolduğunda bildirim al', callback_data: 'alarm_capacity' }],
+          [{ text: '💰 Bilet fiyatı düştüğünde bildirim al', callback_data: 'alarm_price_drop' }],
+          [{ text: '🔄 Seferi Yenile', callback_data: 'journey_refresh' }],
+          [{ text: '🚌 Aynı tarihte farklı sefer incele', callback_data: 'action_back_journeys' }],
+          [{ text: '📅 Farklı bir tarih incele', callback_data: 'action_change_date' }]
+        ]
+      };
+      bot.sendMessage(chatId, `✅ *Koltuk durumu güncellendi!*\n\nŞu an *${availableSeats}* boş koltuk bulunmaktadır.`, {
+        parse_mode: 'Markdown',
+        reply_markup: doneButtons
+      });
+    } catch (err) {
+      console.error('Error refreshing journey:', err);
+      bot.sendMessage(chatId, '❌ Sefer yenilenirken bir hata oluştu.', {
+        reply_markup: getErrorButtons(user)
+      });
+    } finally {
+      setProcessing(chatId, false);
+    }
+    return;
+  }
+
+  // Aynı tarihte farklı sefer incele (Sefer listesine dön)
+  if (data === 'action_back_journeys') {
+    const user = db.getUser(chatId);
+    if (!user.temp || !user.temp.originId || !user.temp.destinationId || !user.temp.date) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Sefer bilgisi bulunamadı.' });
+      return;
+    }
+
+    if (isProcessing(chatId)) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'İşlem devam ediyor, bekleyin...' });
+      return;
+    }
+
+    setProcessing(chatId, true);
+    await bot.answerCallbackQuery(callbackQuery.id, { text: '🚌 Seferler yükleniyor...' });
+
+    try {
+      let journeys = user.temp.allJourneys;
+      if (!journeys || journeys.length === 0) {
+        const statusMsg = await bot.sendMessage(chatId, 'Seferler aranıyor, lütfen bekleyin... ⏳');
+        journeys = await obiletApi.getJourneys(user.temp.originId, user.temp.destinationId, user.temp.date);
+        bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+      }
+
+      if (!journeys || journeys.length === 0) {
+        const errorMarkup = getErrorButtons(user);
+        bot.sendMessage(chatId,
+          `❌ *${calendar.formatDateTurkish(user.temp.date)}* tarihinde *${user.temp.originName} → ${user.temp.destName}* güzergahında sefer bulunamadı.`,
+          { parse_mode: 'Markdown', reply_markup: errorMarkup }
+        );
+        db.updateUser(chatId, { state: 'WAITING_ACTION', temp: user.temp });
+        setProcessing(chatId, false);
+        return;
+      }
+
+      const page = user.temp.currentPage || 0;
+      const sortBy = user.temp.sortBy || 'time';
+      const timeFilter = user.temp.timeFilter || 'all';
+      const only2plus1 = user.temp.only2plus1 || false;
+      const tempUser = { temp: { ...user.temp, allJourneys: journeys } };
+      const { text: listTxt, buttons: journeyButtons, journeyMap } = buildJourneyListMessage(tempUser, page, sortBy, timeFilter, only2plus1);
+
+      db.updateUser(chatId, {
+        state: 'WAITING_JOURNEY',
+        temp: { ...user.temp, allJourneys: journeys, journeyMap, currentPage: page, sortBy, timeFilter, only2plus1 }
+      });
+
+      bot.sendMessage(chatId, listTxt, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: journeyButtons }
+      });
+    } catch (err) {
+      console.error('Error in action_back_journeys:', err);
+      bot.sendMessage(chatId, '❌ Seferler yüklenirken bir hata oluştu.', {
+        reply_markup: getErrorButtons(user)
+      });
+    } finally {
+      setProcessing(chatId, false);
+    }
     return;
   }
 
@@ -1048,13 +1498,23 @@ bot.on('message', async (msg) => {
         journeyId: user.temp.journeyId,
         originId: user.temp.originId,
         destinationId: user.temp.destinationId,
+        originName: user.temp.originName,
+        destName: user.temp.destName,
         date: user.temp.date,
         busName: user.temp.busName,
         departure: user.temp.departure
       });
 
+      const formattedDate = user.temp.date && user.temp.date.includes('-') ? calendar.formatDateTurkish(user.temp.date) : user.temp.date;
+      const timeStr = user.temp.departure ? ` saat *${user.temp.departure}*` : '';
+      const busName = user.temp.busName || 'Otobüs';
+
+      if (user.temp.promptMsgId) {
+        bot.deleteMessage(chatId, user.temp.promptMsgId).catch(() => {});
+      }
+
       db.updateUser(chatId, { state: 'IDLE', temp: {} });
-      bot.sendMessage(chatId, `✅ *Kapasite Alarmı Kuruldu!*\n\n${user.temp.date} tarihindeki ${user.temp.busName} seferinde boş koltuk sayısı ${limit} ve altına düştüğünde size haber vereceğim.`, { parse_mode: 'Markdown' });
+      bot.sendMessage(chatId, `✅ *Kapasite Alarmı Kuruldu!*\n\n*${formattedDate}* tarihindeki${timeStr} *${busName}* seferinde boş koltuk sayısı *${limit}* ve altına düştüğünde size haber vereceğim.`, { parse_mode: 'Markdown' });
     }
     // ===== WAITING_SEAT_NUM =====
     else if (user.state === 'WAITING_SEAT_NUM') {
@@ -1068,14 +1528,24 @@ bot.on('message', async (msg) => {
         journeyId: user.temp.journeyId,
         originId: user.temp.originId,
         destinationId: user.temp.destinationId,
+        originName: user.temp.originName,
+        destName: user.temp.destName,
         date: user.temp.date,
         busName: user.temp.busName,
         departure: user.temp.departure
       });
 
-      db.updateUser(chatId, { state: 'IDLE', temp: {} });
+      const formattedDate = user.temp.date && user.temp.date.includes('-') ? calendar.formatDateTurkish(user.temp.date) : user.temp.date;
+      const timeStr = user.temp.departure ? ` saat *${user.temp.departure}*` : '';
+      const busName = user.temp.busName || 'Otobüs';
       const action = user.temp.alarmType === 'SEAT_EMPTY' ? 'boşaldığında' : 'satıldığında';
-      bot.sendMessage(chatId, `✅ *Koltuk Alarmı Kuruldu!*\n\n${user.temp.date} tarihindeki ${user.temp.busName} seferindeki *${seat}* numaralı koltuk ${action} size haber vereceğim.`, { parse_mode: 'Markdown' });
+
+      if (user.temp.promptMsgId) {
+        bot.deleteMessage(chatId, user.temp.promptMsgId).catch(() => {});
+      }
+
+      db.updateUser(chatId, { state: 'IDLE', temp: {} });
+      bot.sendMessage(chatId, `✅ *Koltuk Alarmı Kuruldu!*\n\n*${formattedDate}* tarihindeki${timeStr} *${busName}* seferindeki *${seat}* numaralı koltuk ${action} size haber vereceğim.`, { parse_mode: 'Markdown' });
     }
 
   } catch (error) {
