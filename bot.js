@@ -205,8 +205,11 @@ function buildJourneyListMessage(user, page = 0, sortBy = 'time', timeFilter = '
   }
   journeyButtons.push(sortRow);
 
-  // İptal
-  journeyButtons.push([{ text: '❌ İptal', callback_data: 'action_cancel' }]);
+  // Tarih Değiştir & İptal
+  journeyButtons.push([
+    { text: '📅 Farklı bir tarih seç', callback_data: 'action_change_date' },
+    { text: '❌ İptal', callback_data: 'action_cancel' }
+  ]);
 
   return { text: listTxt + 'Lütfen bir sefer seçin:', buttons: journeyButtons, journeyMap, filteredCount: sorted.length };
 }
